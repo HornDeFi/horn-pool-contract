@@ -9,8 +9,10 @@ contract HornToken is ERC20, AccessControl {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
 
-    uint256 private _initialSupply = 2000000 * 10 ** 18;
+    uint256 private _initialSupply = 5000000 * 10 ** 18;
     uint256 private _totalSupply = 0;
+    uint256 private _alreadyMinted = 0;
+    uint256 private _maxMintAmount = 5000000 * 10 ** 18;
     uint256 private _maxSupply = 10000000 * 10 ** 18;
 
     constructor() ERC20("Horn", "HORN") {
@@ -24,11 +26,15 @@ contract HornToken is ERC20, AccessControl {
     function mint(address to, uint256 amount) public {
         require(hasRole(MINTER_ROLE, msg.sender), "Caller is not a minter");
         require(_totalSupply + amount <= _maxSupply, "Can't mint more tokens");
+        require(_alreadyMinted + amount <= _maxMintAmount, "Can't mint more tokens");
+        _totalSupply += amount;
+        _alreadyMinted += amount;
         _mint(to, amount);
     }
 
     function burn(address from, uint256 amount) public {
         require(hasRole(BURNER_ROLE, msg.sender), "Caller is not a burner");
+        _totalSupply -= amount;
         _burn(from, amount);
     }
 }
