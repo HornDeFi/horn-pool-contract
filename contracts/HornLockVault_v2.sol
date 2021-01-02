@@ -25,11 +25,13 @@ contract HornLockVault is IHornLockVault {
     }
 
     struct RewardFee {
+        uint256 totalAssetAmount;
         uint256 amount;
         uint256 depositDate;
     }
 
     LockedAsset[] private _lockedAssets;
+    mapping(address => LockedAsset[]) private _lockedAssetsByAddress;
     mapping(uint256 => RewardFee) private _poolFees;
 
     bool public _isActive = true;
@@ -372,6 +374,7 @@ contract HornLockVault is IHornLockVault {
         if (_poolFees[_currentFeeIndex].depositDate < block.timestamp) {
             // Create a new pool fee for today
             _currentFeeIndex++;
+            _poolFees[_currentFeeIndex].totalAssetAmount =_poolFees[_currentFeeIndex - 1].totalAssetAmount;
             _poolFees[_currentFeeIndex].amount = 0;
             _poolFees[_currentFeeIndex].depositDate = block.timestamp.add(
                 1 days
@@ -382,9 +385,11 @@ contract HornLockVault is IHornLockVault {
         _poolFees[_currentFeeIndex].amount = _poolFees[_currentFeeIndex]
             .amount
             .add(depositFee);
+        _poolFees[_currentFeeIndex].totalAssetAmount = _poolFees[_currentFeeIndex]
+            .totalAssetAmount
+            .add(amountSubFee);
 
-        // Set the balance
-        _lockedAssets.push(
+        _lockedAssetsByAddress[sender].push(
             LockedAsset({
                 account: sender,
                 fees: depositFee,
@@ -400,6 +405,7 @@ contract HornLockVault is IHornLockVault {
                 enterPoolFees: _poolFees[_currentFeeIndex].amount
             })
         );
+            
         emit Deposit(
             sender,
             amount,
@@ -429,50 +435,48 @@ contract HornLockVault is IHornLockVault {
                 }
             }
         } else {
-            for (uint256 i = 0; i < _lockedAssets.length; i++) {
+            for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
                 if (
-                    sender == _lockedAssets[i].account &&
-                    _lockedAssets[i].toDate <= block.timestamp &&
-                    _lockedAssets[i].amount > 0
+                    _lockedAssetsByAddress[sender][i].toDate <= block.timestamp &&
+                    _lockedAssetsByAddress[sender][i].amount > 0
                 ) {
                     uint256 hornreward = 0;
-                    if (!_lockedAssets[i].isBurnAsset) {
+                    if (!_lockedAssetsByAddress[sender][i].isBurnAsset) {
                         hornreward = _rewardWithdrawalHorn(
                             sender,
-                            _lockedAssets[i].amount,
-                            _lockedAssets[i].fromDate,
+                            _lockedAssetsByAddress[sender][i].amount,
+                            _lockedAssetsByAddress[sender][i].fromDate,
                             block.timestamp,
-                            _lockedAssets[i].alreadyClaimedHorn
+                            _lockedAssetsByAddress[sender][i].alreadyClaimedHorn
                         );
                     }
                     uint256 reward =
                         _claimFeesForAsset(
-                            _lockedAssets[i],
-                            _lockedAssets[i].amount
+                            _lockedAssetsByAddress[sender][i],
+                            _lockedAssetsByAddress[sender][i].amount
                         );
 
-                    if (!_lockedAssets[i].isBurnAsset) {
+                    if (!_lockedAssetsByAddress[sender][i].isBurnAsset) {
                         totalWithdraw = totalWithdraw
-                            .add(_lockedAssets[i].amount)
+                            .add(_lockedAssetsByAddress[sender][i].amount)
                             .add(reward);
                     } else {
                         totalWithdraw = totalWithdraw.add(reward);
                     }
-                    _lockedAssets[i].alreadyClaimedHorn = _lockedAssets[i]
+                    _lockedAssetsByAddress[sender][i].alreadyClaimedHorn = _lockedAssetsByAddress[sender][i]
                         .alreadyClaimedHorn
                         .add(hornreward);
                 }
             }
 
             // Reset amount
-            for (uint256 i = 0; i < _lockedAssets.length; i++) {
+            for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
                 if (
-                    sender == _lockedAssets[i].account &&
-                    _lockedAssets[i].toDate <= block.timestamp &&
-                    _lockedAssets[i].amount > 0
+                    _lockedAssetsByAddress[sender][i].toDate <= block.timestamp &&
+                    _lockedAssetsByAddress[sender][i].amount > 0
                 ) {
-                    _lockedAssets[i].amount = 0;
-                    _lockedAssets[i].burnedHorn = 0;
+                    _lockedAssetsByAddress[sender][i].amount = 0;
+                    _lockedAssetsByAddress[sender][i].burnedHorn = 0;
                 }
             }
         }
@@ -497,7 +501,7 @@ contract HornLockVault is IHornLockVault {
             "Transfer amount exceeds balance"
         );
         _hornToken.burn(sender, burnAmount);
-        _lockedAssets.push(
+        _lockedAssetsByAddress[sender].push(
             LockedAsset({
                 account: sender,
                 fees: 0,
@@ -523,21 +527,20 @@ contract HornLockVault is IHornLockVault {
     function claimHorn() public payable {
         require(!_hornRewardDisabled, "Claim are disabled for now");
         uint256 totalClaim = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i += 1) {
+        for (uint256 i = 0; i < _lockedAssetsByAddress[msg.sender].length; i += 1) {
             if (
-                msg.sender == _lockedAssets[i].account &&
-                _lockedAssets[i].amount > 0 &&
-                !_lockedAssets[i].isBurnAsset
+                _lockedAssetsByAddress[msg.sender][i].amount > 0 &&
+                !_lockedAssetsByAddress[msg.sender][i].isBurnAsset
             ) {
                 uint256 reward =
                     _rewardWithdrawalHorn(
                         msg.sender,
-                        _lockedAssets[i].amount,
-                        _lockedAssets[i].fromDate,
+                        _lockedAssetsByAddress[msg.sender][i].amount,
+                        _lockedAssetsByAddress[msg.sender][i].fromDate,
                         block.timestamp,
                         _lockedAssets[i].alreadyClaimedHorn
                     );
-                _lockedAssets[i].alreadyClaimedHorn = _lockedAssets[i]
+                _lockedAssetsByAddress[msg.sender][i].alreadyClaimedHorn = _lockedAssetsByAddress[msg.sender][i]
                     .alreadyClaimedHorn
                     .add(reward);
                 totalClaim = totalClaim.add(reward);
@@ -580,8 +583,7 @@ contract HornLockVault is IHornLockVault {
                 _poolFees[y].amount > 0 &&
                 _poolFees[y].depositDate >= asset.fromDate
             ) {
-                uint256 contractBalance =
-                    lockedAssetsBefore(_poolFees[y].depositDate);
+                uint256 contractBalance = _poolFees[y].totalAssetAmount;
                 if (asset.fees > _poolFees[y].amount) continue;
                 uint256 fees = _poolFees[y].amount;
                 if (y == asset.poolIndex) {
@@ -600,7 +602,10 @@ contract HornLockVault is IHornLockVault {
                     senderBalance.mul(10000).div(contractBalance).mul(100);
                 uint256 reward = (fees * weightPercent) / 1000000;
                 totalReward = totalReward.add(reward);
-                _poolFees[y].amount = _poolFees[y].amount.sub(reward);
+                if (y == asset.poolIndex) {
+                    _poolFees[y].amount = _poolFees[y].amount.sub(reward);
+                    _poolFees[y].totalAssetAmount = _poolFees[y].totalAssetAmount.sub(withdrawAmount);
+                }
             }
         }
         return totalReward;
