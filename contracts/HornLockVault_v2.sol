@@ -30,7 +30,6 @@ contract HornLockVault is IHornLockVault {
         uint256 depositDate;
     }
 
-    LockedAsset[] private _lockedAssets;
     mapping(address => LockedAsset[]) private _lockedAssetsByAddress;
     mapping(uint256 => RewardFee) private _poolFees;
 
@@ -82,11 +81,9 @@ contract HornLockVault is IHornLockVault {
 
     function balanceOf(address account) public view override returns (uint256) {
         uint256 totalBalance = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
-            if (_lockedAssets[i].isBurnAsset) continue;
-            if (account == _lockedAssets[i].account) {
-                totalBalance = totalBalance.add(_lockedAssets[i].amount);
-            }
+        for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
+            if (_lockedAssetsByAddress[account][i].isBurnAsset) continue;
+            totalBalance = totalBalance.add(_lockedAssetsByAddress[account][i].amount);
         }
         return totalBalance;
     }
@@ -98,13 +95,12 @@ contract HornLockVault is IHornLockVault {
         returns (uint256)
     {
         uint256 totalBalance = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
-            if (_lockedAssets[i].isBurnAsset) continue;
+        for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
+            if (_lockedAssetsByAddress[account][i].isBurnAsset) continue;
             if (
-                account == _lockedAssets[i].account &&
-                _lockedAssets[i].toDate <= block.timestamp
+                _lockedAssetsByAddress[account][i].toDate <= block.timestamp
             ) {
-                totalBalance = totalBalance.add(_lockedAssets[i].amount);
+                totalBalance = totalBalance.add(_lockedAssetsByAddress[account][i].amount);
             }
         }
         return totalBalance;
@@ -117,13 +113,12 @@ contract HornLockVault is IHornLockVault {
         returns (uint256)
     {
         uint256 totalBalance = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
+        for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
             if (
-                account == _lockedAssets[i].account &&
-                _lockedAssets[i].amount > 0 &&
-                !_lockedAssets[i].isBurnAsset
+                _lockedAssetsByAddress[account][i].amount > 0 &&
+                !_lockedAssetsByAddress[account][i].isBurnAsset
             ) {
-                LockedAsset memory asset = _lockedAssets[i];
+                LockedAsset memory asset = _lockedAssetsByAddress[account][i];
                 uint256 period =
                     block.timestamp.sub(asset.fromDate).div(60).div(60).div(24);
                 if (period <= 0) continue;
@@ -143,21 +138,7 @@ contract HornLockVault is IHornLockVault {
     }
 
     function lockedAssets() public view override returns (uint256) {
-        uint256 totalBalance = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
-            if (_lockedAssets[i].isBurnAsset) continue;
-            totalBalance = totalBalance.add(_lockedAssets[i].amount);
-        }
-        return totalBalance;
-    }
-
-    function lockedAssetsBefore(uint256 before) public view returns (uint256) {
-        uint256 totalBalance = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
-            if (_lockedAssets[i].fromDate <= before) {
-                totalBalance = totalBalance.add(_lockedAssets[i].amount);
-            }
-        }
+        uint256 totalBalance = _token.balanceOf(address(this)).sub(_feesVault);
         return totalBalance;
     }
 
@@ -167,12 +148,12 @@ contract HornLockVault is IHornLockVault {
         returns (uint256)
     {
         uint256 totalBalance = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
+        for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
             if (
-                account == _lockedAssets[i].account &&
-                _lockedAssets[i].isBurnAsset
+                account == _lockedAssetsByAddress[account][i].account &&
+                _lockedAssetsByAddress[account][i].isBurnAsset
             ) {
-                totalBalance = totalBalance.add(_lockedAssets[i].burnedHorn);
+                totalBalance = totalBalance.add(_lockedAssetsByAddress[account][i].burnedHorn);
             }
         }
         return totalBalance;
@@ -244,22 +225,20 @@ contract HornLockVault is IHornLockVault {
         returns (uint256[] memory)
     {
         uint256 count = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
+        for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
             if (
-                _lockedAssets[i].account == account &&
-                _lockedAssets[i].amount > 0 &&
-                _lockedAssets[i].isBurnAsset == filterBurned
+                _lockedAssetsByAddress[account][i].amount > 0 &&
+                _lockedAssetsByAddress[account][i].isBurnAsset == filterBurned
             ) {
                 count++;
             }
         }
         uint256[] memory indexes = new uint256[](count);
         uint256 index = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
+        for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
             if (
-                _lockedAssets[i].account == account &&
-                _lockedAssets[i].amount > 0 &&
-                _lockedAssets[i].isBurnAsset == filterBurned
+                _lockedAssetsByAddress[account][i].amount > 0 &&
+                _lockedAssetsByAddress[account][i].isBurnAsset == filterBurned
             ) {
                 indexes[index] = i;
                 index++;
@@ -274,10 +253,10 @@ contract HornLockVault is IHornLockVault {
         returns (uint256)
     {
         uint256 count = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i++) {
+        for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
             if (
-                _lockedAssets[i].account == account &&
-                _lockedAssets[i].amount > 0
+                _lockedAssetsByAddress[account][i].account == account &&
+                _lockedAssetsByAddress[account][i].amount > 0
             ) {
                 count++;
             }
@@ -291,15 +270,14 @@ contract HornLockVault is IHornLockVault {
         returns (uint256)
     {
         uint256 totalFees = 0;
-        LockedAsset memory asset = _lockedAssets[index];
+        LockedAsset memory asset = _lockedAssetsByAddress[account][index];
         if (asset.account == account && asset.amount > 0) {
             for (uint256 y = 0; y < _currentFeeIndex + 1; y++) {
                 if (
                     _poolFees[y].depositDate >= asset.fromDate &&
                     _poolFees[y].amount > 0
                 ) {
-                    uint256 contractBalance =
-                        lockedAssetsBefore(_poolFees[y].depositDate);
+                    uint256 contractBalance = _poolFees[y].totalAssetAmount;
                     if (asset.fees > _poolFees[y].amount) continue;
                     uint256 fees = _poolFees[y].amount;
                     if (y == asset.poolIndex) {
@@ -326,10 +304,9 @@ contract HornLockVault is IHornLockVault {
         return totalFees;
     }
 
-    function weightInPool(uint256 index) public view returns (uint256) {
-        LockedAsset memory asset = _lockedAssets[index];
-        uint256 contractBalance =
-            lockedAssetsBefore(_poolFees[_currentFeeIndex].depositDate);
+    function weightInPool(address account, uint256 index) public view returns (uint256) {
+        LockedAsset memory asset = _lockedAssetsByAddress[account][index];
+        uint256 contractBalance = _poolFees[_currentFeeIndex].totalAssetAmount;
         uint256 senderBalance = asset.amount;
         uint256 weightPercent =
             senderBalance.mul(10000).div(contractBalance).mul(100);
@@ -425,13 +402,13 @@ contract HornLockVault is IHornLockVault {
         uint256 totalWithdraw = 0;
 
         if (_emergencyWithdraw) {
-            for (uint256 i = 0; i < _lockedAssets.length; i++) {
+            for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
                 if (
-                    sender == _lockedAssets[i].account &&
-                    _lockedAssets[i].amount > 0
+                    sender == _lockedAssetsByAddress[sender][i].account &&
+                    _lockedAssetsByAddress[sender][i].amount > 0
                 ) {
-                    totalWithdraw = totalWithdraw.add(_lockedAssets[i].amount);
-                    _lockedAssets[i].amount = 0;
+                    totalWithdraw = totalWithdraw.add(_lockedAssetsByAddress[sender][i].amount);
+                    _lockedAssetsByAddress[sender][i].amount = 0;
                 }
             }
         } else {
@@ -538,7 +515,7 @@ contract HornLockVault is IHornLockVault {
                         _lockedAssetsByAddress[msg.sender][i].amount,
                         _lockedAssetsByAddress[msg.sender][i].fromDate,
                         block.timestamp,
-                        _lockedAssets[i].alreadyClaimedHorn
+                        _lockedAssetsByAddress[msg.sender][i].alreadyClaimedHorn
                     );
                 _lockedAssetsByAddress[msg.sender][i].alreadyClaimedHorn = _lockedAssetsByAddress[msg.sender][i]
                     .alreadyClaimedHorn
@@ -621,20 +598,12 @@ contract HornLockVault is IHornLockVault {
             "Error transferFrom on the contract"
         );
         _feesVault = 0;
-        if (poolIsEmpty()) {
-            require(
-                _token.transfer(msg.sender, _token.balanceOf(address(this))) ==
-                    true,
-                "Error transferFrom on the contract"
-            );
-        }
-    }
-
-    function poolIsEmpty() public view returns (bool) {
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < _lockedAssets.length; i += 1) {
-            totalAmount = totalAmount.add(_lockedAssets[i].amount);
-        }
-        return totalAmount == 0;
+        //if (poolIsEmpty()) {
+        //    require(
+        //        _token.transfer(msg.sender, _token.balanceOf(address(this))) ==
+        //            true,
+        //        "Error transferFrom on the contract"
+        //    );
+        //}
     }
 }
