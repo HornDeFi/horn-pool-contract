@@ -2,7 +2,7 @@
 
 pragma solidity ^0.7.0;
 
-import "./HornLockVault.sol";
+import "./HornLockVault_v2.sol";
 import "./HornToken.sol";
 import "./interfaces/IExtendedERC20.sol";
 
@@ -42,8 +42,8 @@ contract UnifiedHornVault {
         uint256 weightPerHorn
     ) public payable onlyOwner returns (address) {
         // Create the vault
-        HornLockVault vault =
-            new HornLockVault(
+        HornLockVaultV2 vault =
+            new HornLockVaultV2(
                 msg.sender,
                 lockedTokenAddr,
                 hornTokenAddr,
@@ -74,7 +74,7 @@ contract UnifiedHornVault {
     }
 
     function removePool(address addr) public payable onlyOwner {
-        HornLockVault vault = HornLockVault(addr);
+        HornLockVaultV2 vault = HornLockVaultV2(addr);
         vault.setActiveState(false);
 
         address[] memory newArray = new address[](vaultIndexes.length - 1);

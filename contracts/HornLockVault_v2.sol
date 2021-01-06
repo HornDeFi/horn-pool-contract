@@ -6,7 +6,7 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import "./interfaces/IHornLockVault.sol";
 import "./interfaces/IExtendedERC20.sol";
 
-contract HornLockVault is IHornLockVault {
+contract HornLockVaultV2 is IHornLockVault {
     using SafeMath for uint256;
 
     struct LockedAsset {
@@ -27,7 +27,6 @@ contract HornLockVault is IHornLockVault {
     struct RewardFee {
         uint256 totalAssetAmount;
         uint256 amount;
-        uint256 depositDate;
     }
 
     mapping(address => LockedAsset[]) private _lockedAssetsByAddress;
@@ -76,7 +75,6 @@ contract HornLockVault is IHornLockVault {
         _weightPerHorn = weightPerHorn;
 
         _poolFees[_currentFeeIndex].amount = 0;
-        _poolFees[_currentFeeIndex].depositDate = block.timestamp.add(1 days);
     }
 
     function balanceOf(address account) public view override returns (uint256) {
@@ -274,7 +272,6 @@ contract HornLockVault is IHornLockVault {
         if (asset.account == account && asset.amount > 0) {
             for (uint256 y = 0; y < _currentFeeIndex + 1; y++) {
                 if (
-                    _poolFees[y].depositDate >= asset.fromDate &&
                     _poolFees[y].amount > 0
                 ) {
                     uint256 contractBalance = _poolFees[y].totalAssetAmount;
@@ -348,17 +345,18 @@ contract HornLockVault is IHornLockVault {
 
         // Add fees to withdrawable amount by the owner
         _feesVault = _feesVault.add(fee);
+        /**
         if (_poolFees[_currentFeeIndex].depositDate < block.timestamp) {
             // Create a new pool fee for today
             _currentFeeIndex++;
             _poolFees[_currentFeeIndex].totalAssetAmount =_poolFees[_currentFeeIndex - 1].totalAssetAmount;
             _poolFees[_currentFeeIndex].amount = 0;
             _poolFees[_currentFeeIndex].depositDate = block.timestamp.add(
-                1 days
+                10 seconds
             );
             emit NewPool(_currentFeeIndex, block.timestamp);
         }
-
+        */
         _poolFees[_currentFeeIndex].amount = _poolFees[_currentFeeIndex]
             .amount
             .add(depositFee);
@@ -557,8 +555,7 @@ contract HornLockVault is IHornLockVault {
         uint256 totalReward = 0;
         for (uint256 y = 0; y < _currentFeeIndex + 1; y++) {
             if (
-                _poolFees[y].amount > 0 &&
-                _poolFees[y].depositDate >= asset.fromDate
+                _poolFees[y].amount > 0
             ) {
                 uint256 contractBalance = _poolFees[y].totalAssetAmount;
                 if (asset.fees > _poolFees[y].amount) continue;

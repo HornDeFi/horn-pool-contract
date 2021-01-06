@@ -9,9 +9,8 @@ module.exports = async function(deployer) {
   const hornTokenAddrRopsten = "0x0850e38e4ec34d1d83130ab47a57a955158a7f36";
 
   // Ropsten Deployment
-  await deployer.deploy(HornToken);
-  const _tokenInstance = await HornToken.deployed();
-  /**
+  //await deployer.deploy(HornToken);
+  //const _tokenInstance = await HornToken.deployed();
   const tokenInstance = new web3.eth.Contract(HornTokenABI.abi, hornTokenAddrRopsten);
   await deployer.deploy(UnifiedHornLockVault, hornTokenAddrRopsten);
   const unifiedVaultInstance = await UnifiedHornLockVault.deployed();
@@ -19,7 +18,7 @@ module.exports = async function(deployer) {
   await tokenInstance.methods.grantRole(adminRole, unifiedVaultInstance.address).send({ from: accounts[0] });
   const deployedVault = await unifiedVaultInstance.addPool(hornTokenAddrRopsten, hornTokenAddrRopsten, 20, 
     10, "10000", 0, "1000000000000000000");
- */
+    
   /**
   await deployer.deploy(HornToken);
   const _tokenInstance = await HornToken.deployed();
