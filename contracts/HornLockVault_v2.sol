@@ -17,20 +17,23 @@ contract HornLockVaultV2 is IHornLockVault {
         uint256 fromDate;
         uint256 toDate;
         address referralAddr;
-        uint256 poolIndex;
         uint256 alreadyClaimedHorn;
         bool isBurnAsset;
         uint256 baseAmount;
+        uint256 depositIndex;
         uint256 enterPoolFees;
     }
 
     struct RewardFee {
         uint256 totalAssetAmount;
+        uint256 totalFeesAmount;
         uint256 amount;
+        uint256 depositIndex;
     }
 
     mapping(address => LockedAsset[]) private _lockedAssetsByAddress;
-    mapping(uint256 => RewardFee) private _poolFees;
+    mapping(uint256 => uint256) private _feesAtIndex;
+    RewardFee private _poolFees;
 
     bool public _isActive = true;
     address public _createdFrom;
@@ -42,10 +45,9 @@ contract HornLockVaultV2 is IHornLockVault {
     uint256 public _feesVault;
     uint256 public _minLockDays;
     uint256 public _weightPerHorn;
-    uint256 private _currentFeeIndex = 0;
+    uint256 private _depositIndex = 0;
     bool private _isPaused = false;
     bool private _hornRewardDisabled = false;
-    bool private _emergencyWithdraw = false;
     IExtendedERC20 private _token;
     address public _tokenAddr;
     IExtendedERC20 private _hornToken;
@@ -74,14 +76,21 @@ contract HornLockVaultV2 is IHornLockVault {
         _minLockDays = minLockDays;
         _weightPerHorn = weightPerHorn;
 
-        _poolFees[_currentFeeIndex].amount = 0;
+        _poolFees = RewardFee({
+            amount: 0,
+            totalFeesAmount: 0,
+            totalAssetAmount: 0,
+            depositIndex: _depositIndex
+        });
     }
 
     function balanceOf(address account) public view override returns (uint256) {
         uint256 totalBalance = 0;
         for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
             if (_lockedAssetsByAddress[account][i].isBurnAsset) continue;
-            totalBalance = totalBalance.add(_lockedAssetsByAddress[account][i].amount);
+            totalBalance = totalBalance.add(
+                _lockedAssetsByAddress[account][i].amount
+            );
         }
         return totalBalance;
     }
@@ -95,10 +104,10 @@ contract HornLockVaultV2 is IHornLockVault {
         uint256 totalBalance = 0;
         for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
             if (_lockedAssetsByAddress[account][i].isBurnAsset) continue;
-            if (
-                _lockedAssetsByAddress[account][i].toDate <= block.timestamp
-            ) {
-                totalBalance = totalBalance.add(_lockedAssetsByAddress[account][i].amount);
+            if (_lockedAssetsByAddress[account][i].toDate <= block.timestamp) {
+                totalBalance = totalBalance.add(
+                    _lockedAssetsByAddress[account][i].amount
+                );
             }
         }
         return totalBalance;
@@ -151,7 +160,9 @@ contract HornLockVaultV2 is IHornLockVault {
                 account == _lockedAssetsByAddress[account][i].account &&
                 _lockedAssetsByAddress[account][i].isBurnAsset
             ) {
-                totalBalance = totalBalance.add(_lockedAssetsByAddress[account][i].burnedHorn);
+                totalBalance = totalBalance.add(
+                    _lockedAssetsByAddress[account][i].burnedHorn
+                );
             }
         }
         return totalBalance;
@@ -189,19 +200,6 @@ contract HornLockVaultV2 is IHornLockVault {
             "Only the owner can do this"
         );
         _hornRewardDisabled = newState;
-        return true;
-    }
-
-    function setEmergencyWithdrawState(bool newState)
-        external
-        payable
-        returns (bool)
-    {
-        require(
-            msg.sender == _owner || msg.sender == _createdFrom,
-            "Only the owner can do this"
-        );
-        _emergencyWithdraw = newState;
         return true;
     }
 
@@ -269,41 +267,45 @@ contract HornLockVaultV2 is IHornLockVault {
     {
         uint256 totalFees = 0;
         LockedAsset memory asset = _lockedAssetsByAddress[account][index];
-        if (asset.account == account && asset.amount > 0) {
-            for (uint256 y = 0; y < _currentFeeIndex + 1; y++) {
-                if (
-                    _poolFees[y].amount > 0
-                ) {
-                    uint256 contractBalance = _poolFees[y].totalAssetAmount;
-                    if (asset.fees > _poolFees[y].amount) continue;
-                    uint256 fees = _poolFees[y].amount;
-                    if (y == asset.poolIndex) {
-                        if (
-                            asset.enterPoolFees > 0 &&
-                            fees >= asset.enterPoolFees
-                        ) {
-                            fees = fees.sub(asset.enterPoolFees);
-                        } else if (
-                            asset.enterPoolFees > 0 &&
-                            fees < asset.enterPoolFees
-                        ) {
-                            continue;
-                        }
-                    }
-                    uint256 senderBalance = asset.amount;
-                    uint256 weightPercent =
-                        senderBalance.mul(10000).div(contractBalance).mul(100);
-                    uint256 reward = fees.mul(weightPercent).div(1000000);
-                    totalFees = totalFees.add(reward);
-                }
-            }
+        if (
+            _poolFees.amount <= 0 ||
+            asset.fees > _poolFees.amount ||
+            asset.account != account ||
+            asset.amount <= 0
+        ) return 0;
+
+        uint256 contractBalance = _poolFees.totalAssetAmount;
+        if (asset.fees > _poolFees.amount) return 0;
+        uint256 reducedEnterPoolFees = asset.enterPoolFees;
+        if (
+            _feesAtIndex[_depositIndex].sub(_feesAtIndex[asset.depositIndex]) >
+            reducedEnterPoolFees
+        ) {
+            reducedEnterPoolFees = 0;
+        } else {
+            reducedEnterPoolFees = reducedEnterPoolFees.sub(
+                _feesAtIndex[_depositIndex].sub(
+                    _feesAtIndex[asset.depositIndex]
+                )
+            );
         }
+        uint256 fees = _poolFees.amount.sub(reducedEnterPoolFees);
+
+        uint256 senderBalance = asset.amount;
+        uint256 weightPercent =
+            senderBalance.mul(10000).div(contractBalance).mul(100);
+        uint256 reward = fees.mul(weightPercent).div(1000000);
+        totalFees = totalFees.add(reward);
         return totalFees;
     }
 
-    function weightInPool(address account, uint256 index) public view returns (uint256) {
+    function weightInPool(address account, uint256 index)
+        public
+        view
+        returns (uint256)
+    {
         LockedAsset memory asset = _lockedAssetsByAddress[account][index];
-        uint256 contractBalance = _poolFees[_currentFeeIndex].totalAssetAmount;
+        uint256 contractBalance = _poolFees.totalAssetAmount;
         uint256 senderBalance = asset.amount;
         uint256 weightPercent =
             senderBalance.mul(10000).div(contractBalance).mul(100);
@@ -345,27 +347,26 @@ contract HornLockVaultV2 is IHornLockVault {
 
         // Add fees to withdrawable amount by the owner
         _feesVault = _feesVault.add(fee);
-        /**
-        if (_poolFees[_currentFeeIndex].depositDate < block.timestamp) {
-            // Create a new pool fee for today
-            _currentFeeIndex++;
-            _poolFees[_currentFeeIndex].totalAssetAmount =_poolFees[_currentFeeIndex - 1].totalAssetAmount;
-            _poolFees[_currentFeeIndex].amount = 0;
-            _poolFees[_currentFeeIndex].depositDate = block.timestamp.add(
-                10 seconds
+        if (_depositIndex == 0) {
+            // If is the first deposit all fees goes the vault
+            _feesVault = _feesVault.add(depositFee);
+        } else {
+            _poolFees.totalFeesAmount = _poolFees.totalFeesAmount.add(
+                depositFee
             );
-            emit NewPool(_currentFeeIndex, block.timestamp);
+            _poolFees.amount = _poolFees.amount.add(depositFee);
         }
-        */
-        _poolFees[_currentFeeIndex].amount = _poolFees[_currentFeeIndex]
-            .amount
-            .add(depositFee);
-        _poolFees[_currentFeeIndex].totalAssetAmount = _poolFees[_currentFeeIndex]
-            .totalAssetAmount
-            .add(amountSubFee);
+        _poolFees.totalAssetAmount = _poolFees.totalAssetAmount.add(
+            amountSubFee
+        );
+
+        _depositIndex = _depositIndex.add(1);
+        _poolFees.depositIndex = _depositIndex;
+        _feesAtIndex[_depositIndex] = _poolFees.totalFeesAmount;
 
         _lockedAssetsByAddress[sender].push(
             LockedAsset({
+                enterPoolFees: _poolFees.amount,
                 account: sender,
                 fees: depositFee,
                 baseAmount: amountSubFee,
@@ -375,12 +376,11 @@ contract HornLockVaultV2 is IHornLockVault {
                 toDate: block.timestamp.add(_minLockDays * 1 days),
                 referralAddr: referralAddr,
                 alreadyClaimedHorn: 0,
-                poolIndex: _currentFeeIndex,
                 isBurnAsset: false,
-                enterPoolFees: _poolFees[_currentFeeIndex].amount
+                depositIndex: _depositIndex
             })
         );
-            
+
         emit Deposit(
             sender,
             amount,
@@ -398,61 +398,38 @@ contract HornLockVaultV2 is IHornLockVault {
 
     function _withdraw(address sender) internal {
         uint256 totalWithdraw = 0;
-
-        if (_emergencyWithdraw) {
-            for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
-                if (
-                    sender == _lockedAssetsByAddress[sender][i].account &&
-                    _lockedAssetsByAddress[sender][i].amount > 0
-                ) {
-                    totalWithdraw = totalWithdraw.add(_lockedAssetsByAddress[sender][i].amount);
-                    _lockedAssetsByAddress[sender][i].amount = 0;
+        for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
+            LockedAsset storage asset = _lockedAssetsByAddress[sender][i];
+            if (asset.toDate <= block.timestamp && asset.amount > 0) {
+                uint256 hornreward = 0;
+                if (!asset.isBurnAsset) {
+                    hornreward = _rewardWithdrawalHorn(
+                        sender,
+                        asset.amount,
+                        asset.fromDate,
+                        block.timestamp,
+                        asset.alreadyClaimedHorn
+                    );
                 }
+                uint256 reward = _claimFeesForAsset(asset, asset.amount);
+
+                if (!asset.isBurnAsset) {
+                    totalWithdraw = totalWithdraw.add(asset.amount).add(reward);
+                } else {
+                    totalWithdraw = totalWithdraw.add(reward);
+                }
+                asset.alreadyClaimedHorn = asset.alreadyClaimedHorn.add(
+                    hornreward
+                );
             }
-        } else {
-            for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
-                if (
-                    _lockedAssetsByAddress[sender][i].toDate <= block.timestamp &&
-                    _lockedAssetsByAddress[sender][i].amount > 0
-                ) {
-                    uint256 hornreward = 0;
-                    if (!_lockedAssetsByAddress[sender][i].isBurnAsset) {
-                        hornreward = _rewardWithdrawalHorn(
-                            sender,
-                            _lockedAssetsByAddress[sender][i].amount,
-                            _lockedAssetsByAddress[sender][i].fromDate,
-                            block.timestamp,
-                            _lockedAssetsByAddress[sender][i].alreadyClaimedHorn
-                        );
-                    }
-                    uint256 reward =
-                        _claimFeesForAsset(
-                            _lockedAssetsByAddress[sender][i],
-                            _lockedAssetsByAddress[sender][i].amount
-                        );
+        }
 
-                    if (!_lockedAssetsByAddress[sender][i].isBurnAsset) {
-                        totalWithdraw = totalWithdraw
-                            .add(_lockedAssetsByAddress[sender][i].amount)
-                            .add(reward);
-                    } else {
-                        totalWithdraw = totalWithdraw.add(reward);
-                    }
-                    _lockedAssetsByAddress[sender][i].alreadyClaimedHorn = _lockedAssetsByAddress[sender][i]
-                        .alreadyClaimedHorn
-                        .add(hornreward);
-                }
-            }
-
-            // Reset amount
-            for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
-                if (
-                    _lockedAssetsByAddress[sender][i].toDate <= block.timestamp &&
-                    _lockedAssetsByAddress[sender][i].amount > 0
-                ) {
-                    _lockedAssetsByAddress[sender][i].amount = 0;
-                    _lockedAssetsByAddress[sender][i].burnedHorn = 0;
-                }
+        // Reset amount
+        for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
+            LockedAsset storage asset = _lockedAssetsByAddress[sender][i];
+            if (asset.toDate <= block.timestamp && asset.amount > 0) {
+                asset.amount = 0;
+                asset.burnedHorn = 0;
             }
         }
         if (totalWithdraw <= 0) return;
@@ -476,8 +453,11 @@ contract HornLockVaultV2 is IHornLockVault {
             "Transfer amount exceeds balance"
         );
         _hornToken.burn(sender, burnAmount);
+
+        _depositIndex = _depositIndex.add(1);
         _lockedAssetsByAddress[sender].push(
             LockedAsset({
+                enterPoolFees: _poolFees.amount,
                 account: sender,
                 fees: 0,
                 baseAmount: burnAmount.mul(_weightPerHorn).div(1 ether),
@@ -487,9 +467,8 @@ contract HornLockVaultV2 is IHornLockVault {
                 toDate: block.timestamp.add(_minLockDays * 1 days),
                 referralAddr: address(0),
                 alreadyClaimedHorn: 0,
-                poolIndex: _currentFeeIndex,
                 isBurnAsset: true,
-                enterPoolFees: _poolFees[_currentFeeIndex].amount
+                depositIndex: _depositIndex
             })
         );
         emit Burn(
@@ -502,22 +481,22 @@ contract HornLockVaultV2 is IHornLockVault {
     function claimHorn() public payable {
         require(!_hornRewardDisabled, "Claim are disabled for now");
         uint256 totalClaim = 0;
-        for (uint256 i = 0; i < _lockedAssetsByAddress[msg.sender].length; i += 1) {
-            if (
-                _lockedAssetsByAddress[msg.sender][i].amount > 0 &&
-                !_lockedAssetsByAddress[msg.sender][i].isBurnAsset
-            ) {
+        for (
+            uint256 i = 0;
+            i < _lockedAssetsByAddress[msg.sender].length;
+            i += 1
+        ) {
+            LockedAsset storage asset = _lockedAssetsByAddress[msg.sender][i];
+            if (asset.amount > 0 && !asset.isBurnAsset) {
                 uint256 reward =
                     _rewardWithdrawalHorn(
                         msg.sender,
-                        _lockedAssetsByAddress[msg.sender][i].amount,
-                        _lockedAssetsByAddress[msg.sender][i].fromDate,
+                        asset.amount,
+                        asset.fromDate,
                         block.timestamp,
-                        _lockedAssetsByAddress[msg.sender][i].alreadyClaimedHorn
+                        asset.alreadyClaimedHorn
                     );
-                _lockedAssetsByAddress[msg.sender][i].alreadyClaimedHorn = _lockedAssetsByAddress[msg.sender][i]
-                    .alreadyClaimedHorn
-                    .add(reward);
+                asset.alreadyClaimedHorn = asset.alreadyClaimedHorn.add(reward);
                 totalClaim = totalClaim.add(reward);
             }
         }
@@ -552,37 +531,24 @@ contract HornLockVaultV2 is IHornLockVault {
         LockedAsset storage asset,
         uint256 withdrawAmount
     ) internal returns (uint256) {
-        uint256 totalReward = 0;
-        for (uint256 y = 0; y < _currentFeeIndex + 1; y++) {
-            if (
-                _poolFees[y].amount > 0
-            ) {
-                uint256 contractBalance = _poolFees[y].totalAssetAmount;
-                if (asset.fees > _poolFees[y].amount) continue;
-                uint256 fees = _poolFees[y].amount;
-                if (y == asset.poolIndex) {
-                    if (
-                        asset.enterPoolFees > 0 && fees >= asset.enterPoolFees
-                    ) {
-                        fees = fees.sub(asset.enterPoolFees);
-                    } else if (
-                        asset.enterPoolFees > 0 && fees < asset.enterPoolFees
-                    ) {
-                        continue;
-                    }
-                }
-                uint256 senderBalance = withdrawAmount;
-                uint256 weightPercent =
-                    senderBalance.mul(10000).div(contractBalance).mul(100);
-                uint256 reward = (fees * weightPercent) / 1000000;
-                totalReward = totalReward.add(reward);
-                if (y == asset.poolIndex) {
-                    _poolFees[y].amount = _poolFees[y].amount.sub(reward);
-                    _poolFees[y].totalAssetAmount = _poolFees[y].totalAssetAmount.sub(withdrawAmount);
-                }
-            }
+        if (_poolFees.amount <= 0 || asset.fees > _poolFees.amount) return 0;
+        uint256 contractBalance = _poolFees.totalAssetAmount;
+        uint256 feesSinceDeposit =
+            _feesAtIndex[_depositIndex].sub(_feesAtIndex[asset.depositIndex]); // gas saver
+        uint256 reducedEnterPoolFees = asset.enterPoolFees;
+        if (feesSinceDeposit > reducedEnterPoolFees) {
+            reducedEnterPoolFees = 0;
+        } else {
+            reducedEnterPoolFees = reducedEnterPoolFees.sub(feesSinceDeposit);
         }
-        return totalReward;
+        uint256 senderBalance = withdrawAmount;
+        uint256 reward = ((_poolFees.amount.sub(reducedEnterPoolFees)) * (senderBalance.mul(10000).div(contractBalance).mul(100))) / 1000000;
+
+        _poolFees.amount = _poolFees.amount.sub(reward);
+        _poolFees.totalAssetAmount = _poolFees.totalAssetAmount.sub(
+            withdrawAmount
+        );
+        return reward;
     }
 
     function withdrawFees() public payable {
