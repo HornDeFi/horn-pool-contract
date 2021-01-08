@@ -16,10 +16,8 @@ contract HornLockVaultV2 is IHornLockVault {
         uint256 fees;
         uint256 fromDate;
         uint256 toDate;
-        address referralAddr;
         uint256 alreadyClaimedHorn;
         bool isBurnAsset;
-        uint256 baseAmount;
         uint256 depositIndex;
         uint256 enterPoolFees;
     }
@@ -46,8 +44,8 @@ contract HornLockVaultV2 is IHornLockVault {
     uint256 public _minLockDays;
     uint256 public _weightPerHorn;
     uint256 private _depositIndex = 0;
-    bool private _isPaused = false;
-    bool private _hornRewardDisabled = false;
+    bool public _isPaused = false;
+    bool public _hornRewardDisabled = false;
     IExtendedERC20 private _token;
     address public _tokenAddr;
     IExtendedERC20 private _hornToken;
@@ -87,7 +85,7 @@ contract HornLockVaultV2 is IHornLockVault {
     function balanceOf(address account) public view override returns (uint256) {
         uint256 totalBalance = 0;
         for (uint256 i = 0; i < _lockedAssetsByAddress[account].length; i++) {
-            if (_lockedAssetsByAddress[account][i].isBurnAsset) continue;
+            if (_lockedAssetsByAddress[account][i].isBurnAsset || _lockedAssetsByAddress[account][i].amount <= 0) continue;
             totalBalance = totalBalance.add(
                 _lockedAssetsByAddress[account][i].amount
             );
@@ -276,20 +274,23 @@ contract HornLockVaultV2 is IHornLockVault {
 
         uint256 contractBalance = _poolFees.totalAssetAmount;
         if (asset.fees > _poolFees.amount) return 0;
+        uint256 feesSinceDeposit =
+            _feesAtIndex[_depositIndex].sub(_feesAtIndex[asset.depositIndex]); // gas saver
         uint256 reducedEnterPoolFees = asset.enterPoolFees;
-        if (
-            _feesAtIndex[_depositIndex].sub(_feesAtIndex[asset.depositIndex]) >
-            reducedEnterPoolFees
-        ) {
+        if (feesSinceDeposit > reducedEnterPoolFees) {
             reducedEnterPoolFees = 0;
         } else {
-            reducedEnterPoolFees = reducedEnterPoolFees.sub(
-                _feesAtIndex[_depositIndex].sub(
-                    _feesAtIndex[asset.depositIndex]
-                )
-            );
+            reducedEnterPoolFees = reducedEnterPoolFees.sub(feesSinceDeposit);
         }
-        uint256 fees = _poolFees.amount.sub(reducedEnterPoolFees);
+        
+        uint256 fees = 0;
+        if(_poolFees.amount >= reducedEnterPoolFees) {
+            fees = _poolFees.amount.sub(reducedEnterPoolFees);
+        }
+        else {
+            fees = _poolFees.amount;
+        }
+
 
         uint256 senderBalance = asset.amount;
         uint256 weightPercent =
@@ -369,12 +370,10 @@ contract HornLockVaultV2 is IHornLockVault {
                 enterPoolFees: _poolFees.amount,
                 account: sender,
                 fees: depositFee,
-                baseAmount: amountSubFee,
                 amount: amountSubFee,
                 burnedHorn: 0,
                 fromDate: block.timestamp,
                 toDate: block.timestamp.add(_minLockDays * 1 days),
-                referralAddr: referralAddr,
                 alreadyClaimedHorn: 0,
                 isBurnAsset: false,
                 depositIndex: _depositIndex
@@ -460,12 +459,10 @@ contract HornLockVaultV2 is IHornLockVault {
                 enterPoolFees: _poolFees.amount,
                 account: sender,
                 fees: 0,
-                baseAmount: burnAmount.mul(_weightPerHorn).div(1 ether),
                 amount: burnAmount.mul(_weightPerHorn).div(1 ether),
                 burnedHorn: burnAmount,
                 fromDate: block.timestamp,
                 toDate: block.timestamp.add(_minLockDays * 1 days),
-                referralAddr: address(0),
                 alreadyClaimedHorn: 0,
                 isBurnAsset: true,
                 depositIndex: _depositIndex
@@ -541,8 +538,17 @@ contract HornLockVaultV2 is IHornLockVault {
         } else {
             reducedEnterPoolFees = reducedEnterPoolFees.sub(feesSinceDeposit);
         }
+
+        uint256 fees = 0;
+        if(_poolFees.amount >= reducedEnterPoolFees) {
+            fees = _poolFees.amount.sub(reducedEnterPoolFees);
+        }
+        else {
+            fees = _poolFees.amount;
+        }
+
         uint256 senderBalance = withdrawAmount;
-        uint256 reward = ((_poolFees.amount.sub(reducedEnterPoolFees)) * (senderBalance.mul(10000).div(contractBalance).mul(100))) / 1000000;
+        uint256 reward = (fees * (senderBalance.mul(10000).div(contractBalance).mul(100))) / 1000000;
 
         _poolFees.amount = _poolFees.amount.sub(reward);
         _poolFees.totalAssetAmount = _poolFees.totalAssetAmount.sub(
@@ -561,12 +567,5 @@ contract HornLockVaultV2 is IHornLockVault {
             "Error transferFrom on the contract"
         );
         _feesVault = 0;
-        //if (poolIsEmpty()) {
-        //    require(
-        //        _token.transfer(msg.sender, _token.balanceOf(address(this))) ==
-        //            true,
-        //        "Error transferFrom on the contract"
-        //    );
-        //}
     }
 }
