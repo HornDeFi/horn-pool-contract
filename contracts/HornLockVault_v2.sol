@@ -3,6 +3,7 @@
 pragma solidity ^0.7.0;
 
 import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts/utils/EnumerableSet.sol";
 import "./interfaces/IHornLockVault.sol";
 import "./interfaces/IExtendedERC20.sol";
 
@@ -397,9 +398,11 @@ contract HornLockVaultV2 is IHornLockVault {
 
     function _withdraw(address sender) internal {
         uint256 totalWithdraw = 0;
+        uint256 totalRemovedAssetsCount = 0;
         for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
             LockedAsset storage asset = _lockedAssetsByAddress[sender][i];
             if (asset.toDate <= block.timestamp && asset.amount > 0) {
+                totalRemovedAssetsCount = totalRemovedAssetsCount + 1;
                 uint256 hornreward = 0;
                 if (!asset.isBurnAsset) {
                     hornreward = _rewardWithdrawalHorn(
@@ -424,13 +427,20 @@ contract HornLockVaultV2 is IHornLockVault {
         }
 
         // Reset amount
+        LockedAsset[] memory newLockedAssetArray = new LockedAsset[](_lockedAssetsByAddress[sender].length - totalRemovedAssetsCount);
+        uint256 y = 0;
         for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
             LockedAsset storage asset = _lockedAssetsByAddress[sender][i];
             if (asset.toDate <= block.timestamp && asset.amount > 0) {
                 asset.amount = 0;
                 asset.burnedHorn = 0;
+            } else {
+                newLockedAssetArray[y] = _lockedAssetsByAddress[sender][i];
+                y = y + 1;
             }
         }
+        _lockedAssetsByAddress[sender] = newLockedAssetArray;
+
         if (totalWithdraw <= 0) return;
         require(
             _token.transfer(sender, totalWithdraw) == true,
