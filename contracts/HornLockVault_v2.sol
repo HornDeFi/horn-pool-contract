@@ -427,16 +427,14 @@ contract HornLockVaultV2 is IHornLockVault {
         }
 
         // Reset amount
-        LockedAsset[] memory newLockedAssetArray = new LockedAsset[](_lockedAssetsByAddress[sender].length - totalRemovedAssetsCount);
-        uint256 y = 0;
+        LockedAsset[] storage newLockedAssetArray;
         for (uint256 i = 0; i < _lockedAssetsByAddress[sender].length; i++) {
             LockedAsset storage asset = _lockedAssetsByAddress[sender][i];
             if (asset.toDate <= block.timestamp && asset.amount > 0) {
                 asset.amount = 0;
                 asset.burnedHorn = 0;
             } else {
-                newLockedAssetArray[y] = _lockedAssetsByAddress[sender][i];
-                y = y + 1;
+                newLockedAssetArray.push(_lockedAssetsByAddress[sender][i]);
             }
         }
         _lockedAssetsByAddress[sender] = newLockedAssetArray;

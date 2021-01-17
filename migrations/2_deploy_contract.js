@@ -1,6 +1,7 @@
 var HornToken = artifacts.require("HornToken");
 var HornLockVault_Horn = artifacts.require("HornLockVault");
 var UnifiedHornLockVault = artifacts.require("UnifiedHornVault");
+var HornPreSale = artifacts.require("HornPreSale");
 var HornTokenABI = require('../build/contracts/HornToken.json');
 
 module.exports = async function(deployer) {
@@ -11,6 +12,7 @@ module.exports = async function(deployer) {
   // Ropsten Deployment
   //await deployer.deploy(HornToken);
   //const _tokenInstance = await HornToken.deployed();
+  /**
   const tokenInstance = new web3.eth.Contract(HornTokenABI.abi, hornTokenAddrRopsten);
   await deployer.deploy(UnifiedHornLockVault, hornTokenAddrRopsten);
   const unifiedVaultInstance = await UnifiedHornLockVault.deployed();
@@ -18,7 +20,17 @@ module.exports = async function(deployer) {
   await tokenInstance.methods.grantRole(adminRole, unifiedVaultInstance.address).send({ from: accounts[0] });
   const deployedVault = await unifiedVaultInstance.addPool(hornTokenAddrRopsten, hornTokenAddrRopsten, 20, 
     10, "10000", 0, "1000000000000000000");
-    
+  */
+
+  // Deploy the presale
+  const tokenInstance = new web3.eth.Contract(HornTokenABI.abi, hornTokenAddrRopsten);
+  await deployer.deploy(HornPreSale, hornTokenAddrRopsten, "2000000000000000000000000", "0xc778417E063141139Fce010982780140Aa0cD5Ab", "5000");
+  const presaleInstance = await HornPreSale.deployed();
+  const minterRole = await tokenInstance.methods.MINTER_ROLE().call();
+  const burnerRole = await tokenInstance.methods.BURNER_ROLE().call();
+  await tokenInstance.methods.grantRole(minterRole, presaleInstance.address).send({ from: accounts[0] });
+  await tokenInstance.methods.grantRole(burnerRole, presaleInstance.address).send({ from: accounts[0] });
+
   /**
   await deployer.deploy(HornToken);
   const _tokenInstance = await HornToken.deployed();
